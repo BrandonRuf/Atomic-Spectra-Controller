@@ -18,11 +18,11 @@
 #define PIN_PMT               A1
 
 /* Constants */
-const uint16_t MICROSTEP_RATIO     = 400;   // Microstepping ratio (number of microsteps per revolution)
-const uint16_t MAX_STEP            = 58868; // (VERIFIED EMPIRICALLY)
+const uint16_t MICROSTEP_RATIO     = 400;   // Microstepping ratio (# microsteps/revolution) - Set on the motor driver
+const uint16_t MAX_STEP            = 58870; // (VERIFIED EMPIRICALLY)
 const uint16_t MIN_STEP            = 164;   // (VERIFIED EMPIRICALLY)
 const uint16_t DEFAULT_STEP_DELAY  = 2000;  // Motor step pulse delay
-const uint16_t HOMING_SETTLE_DELAY = 1000;  // Delay used between motor steps in the homing function
+const uint16_t HOMING_SETTLE_DELAY = 2000;  // Delay used between motor steps in the homing function
 const uint16_t HOMING_SWITCH_DELAY = 500;
 const uint8_t  PMT_DEFAULT_OFFSET  = 10;
 
@@ -45,12 +45,12 @@ SCPI_Parser Monochromator;
 void setup()
 {
   /* SCPI commands */
-  Monochromator.RegisterCommand(F("*IDN?")    , &Identify);
-  Monochromator.RegisterCommand(F("STATus?")  , &GetStatus);
-  Monochromator.RegisterCommand(F("POSition?"), &GetPosition);
-  Monochromator.RegisterCommand(F("POSition") , &SetPosition);
-  Monochromator.RegisterCommand(F("HOME")     , &Home);
-  Monochromator.RegisterCommand(F("DEBUG")    , &SetDebug);
+  Monochromator.RegisterCommand(F("*IDN?")          , &Identify);
+  Monochromator.RegisterCommand(F("STATus?")        , &GetStatus);
+  Monochromator.RegisterCommand(F("POSition?")      , &GetPosition);
+  Monochromator.RegisterCommand(F("POSition")       , &SetPosition);
+  Monochromator.RegisterCommand(F("HOME")           , &Home);
+  Monochromator.RegisterCommand(F("DEBUG")          , &SetDebug);
 
   Monochromator.SetCommandTreeBase(F("STAGE"));
     Monochromator.RegisterCommand(F(":DIR?"), &GetMotorDir);
@@ -59,13 +59,17 @@ void setup()
     Monochromator.SetCommandTreeBase(F("STAGE:LIMit"));
       Monochromator.RegisterCommand(F(":MAX?"), &GetMaxLimitState);
       Monochromator.RegisterCommand(F(":MIN?"), &GetMinLimitState);
-  
+    Monochromator.SetCommandTreeBase(F("STAGE:MOVe"));
+      Monochromator.RegisterCommand(F(":MAX")   , &GoToStageMax);
+      Monochromator.RegisterCommand(F(":MIN")   , &GoToStageMin);
+
   Monochromator.SetCommandTreeBase(F("PMT"));
     Monochromator.RegisterCommand(F(":VALue?") , &GetPMT);
     Monochromator.RegisterCommand(F(":OFFSET?"), &GetPMTOffset);
     Monochromator.RegisterCommand(F(":OFFSET") , &SetPMTOffset);
 
 
+  /* Pin I/0 */
   pinMode(PIN_STEP,       OUTPUT); // Motor stepping pin
   pinMode(PIN_DIR,        OUTPUT); // Motor direction pin
   pinMode(PIN_OFFSET,     OUTPUT); // PMT I-to-V opamp offset bias voltage.
@@ -153,7 +157,7 @@ void SetDebug(SCPI_C commands, SCPI_P parameters, Stream& interface){
 }
 
 void GetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  interface.println(String(motor_position, DEC));
+  interface.println(String((float)motor_position/MICROSTEP_RATIO, 4));
 }
 
 void SetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -162,7 +166,7 @@ void SetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   
   if (parameters.Size() > 0) {
     x = constrain(String(parameters[0]).toFloat(), (float)MIN_STEP/MICROSTEP_RATIO, (float)MAX_STEP/MICROSTEP_RATIO );
-    if(_debug) interface.println(String(x, DEC));
+    if(_debug) interface.println("Target: "+String(x, 4));
   }
   else{
     interface.println("No parameter supplied.");
@@ -179,9 +183,9 @@ void SetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     interface.println("Position is out of range.");
     return;  
   }
-  if(new_position > motor_position) motor_direction      = LOW;     // Set to forward direction 
-  else if(new_position < motor_position) motor_direction = HIGH;    // Set to reverse direction
-  else                                                     return;  // Exit (we are already there)
+  if(new_position > motor_position)      set_direction(LOW);  // Set to forward direction 
+  else if(new_position < motor_position) set_direction(HIGH); // Set to reverse direction
+  else                                               return;  // Exit (we are already there)
 
   /* Step until we arrive at desired position */
   while(motor_position != new_position){ 
@@ -199,7 +203,7 @@ void SetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     /* Treat any incoming serial data as a signal to stop the move. */
     if(Serial.available()){
       //while(Serial.available()) Serial.read(); // Flush the recieve buffer
-      interface.println("Positioning stopped.");
+      interface.println("Move interrupted.");
       return;
     }
     
@@ -234,7 +238,8 @@ void StepMotor(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 }
 
 void GetMotorDir(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-    interface.println(String(motor_direction, DEC));
+  if(motor_direction == LOW) interface.println("LOW");
+  else                       interface.println("HIGH");
 }
 
 void SetMotorDir(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -256,6 +261,36 @@ void GetMinLimitState(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   if (state == HIGH) interface.println("HIGH");
   else               interface.println("LOW");
 }
+
+void GoToStageMax(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  set_direction(LOW);
+
+  while(1){ 
+    if( digitalRead(PIN_SWITCH_MAX) ) break; // Exit if switch was triggered (we're done stepping) 
+    singleStep();                            // Step the motor
+    delayMicroseconds(HOMING_SETTLE_DELAY);  // An additional delay to help microswitches settle
+    
+    if(Serial.available()){ /* Treat any incoming serial data as a signal to stop the move. */
+      interface.println("Move interrupted.");
+      return;                    
+    }
+  }
+}
+
+void GoToStageMin(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  set_direction(HIGH);
+  while(1){ 
+    if( digitalRead(PIN_SWITCH_MIN) ) break; // Exit if switch was triggered (we're done stepping) 
+    singleStep();                            // Step the motor
+    delayMicroseconds(HOMING_SETTLE_DELAY);  // An additional delay to help microswitches settle
+    
+    if(Serial.available()){ /* Treat any incoming serial data as a signal to stop the move. */
+      interface.println("Move interrupted.");
+      return;                    
+    }
+  }
+}
+
 
 /* Internal Operations */
 void singleStep(){
