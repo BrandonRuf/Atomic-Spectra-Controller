@@ -142,11 +142,14 @@ void Home(SCPI_C commands, SCPI_P parameters, Stream& interface){ /*
     singleStep();
     displacement--;
   }
-  
+
   if(_debug) digitalWrite(LED_BUILTIN,LOW);
 
   /* Update motor calibration status */
-  if(home_status != FAILED) home_status = COMPLETED;
+  if(home_status != FAILED){
+    interface.println("Homing complete.");    // Give the ok over the serial line.
+    home_status = COMPLETED;
+  }
 } 
 
 void SetDebug(SCPI_C commands, SCPI_P parameters, Stream& interface){
@@ -157,7 +160,8 @@ void SetDebug(SCPI_C commands, SCPI_P parameters, Stream& interface){
 }
 
 void GetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  interface.println(String((float)motor_position/MICROSTEP_RATIO, 4));
+  if(home_status == COMPLETED) interface.println(String((float)motor_position/MICROSTEP_RATIO, 4));
+  else                         interface.println("Homing not complete, position unknown.");
 }
 
 void SetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -209,6 +213,7 @@ void SetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     
     singleStep();
   }
+  interface.println("Repositioned...");
 }
 
 void GetPMT(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -220,7 +225,7 @@ void SetPMTOffset(SCPI_C commands, SCPI_P parameters, Stream& interface) {
    if (parameters.Size() > 0) {
     pmt_offset = constrain(String(parameters[0]).toInt(), 0, 127);
     analogWrite(PIN_OFFSET, pmt_offset);
-    if(_debug) interface.println(String(pmt_offset, DEC));
+    interface.println(String(pmt_offset, DEC));
   }
 }
 
