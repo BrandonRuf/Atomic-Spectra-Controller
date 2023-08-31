@@ -2,10 +2,13 @@
  * For use in the Atomic Spectra experiment in McGill University physics course(s) PHYS-359/439.
  * Written by Brandon Ruffolo in 2023.
  */
+
 #include "Vrekrer_scpi_parser.h"
 
+/* Serial COM parameters */
 #define SKETCH_VERSION "0.0.1"
-#define BAUD 115200 // Baudrate  
+#define BAUD 115200 
+#define LINEFEED "\n"
 
 /* Pin Definitions */
 #define PIN_STEP              6  // Stepper motor step            
@@ -46,6 +49,7 @@ void setup()
 {
   /* SCPI commands */
   Monochromator.RegisterCommand(F("*IDN?")          , &Identify);
+  Monochromator.RegisterCommand(F("HELP")           , &Help);
   Monochromator.RegisterCommand(F("STATus?")        , &GetStatus);
   Monochromator.RegisterCommand(F("POSition?")      , &GetPosition);
   Monochromator.RegisterCommand(F("POSition")       , &SetPosition);
@@ -53,20 +57,20 @@ void setup()
   Monochromator.RegisterCommand(F("DEBUG")          , &SetDebug);
 
   Monochromator.SetCommandTreeBase(F("STAGE"));
-    Monochromator.RegisterCommand(F(":DIR?"), &GetMotorDir);
-    Monochromator.RegisterCommand(F(":DIR") , &SetMotorDir);
-    Monochromator.RegisterCommand(F(":STEP"), &StepMotor);
+    Monochromator.RegisterCommand(F(":DIR?")        , &GetMotorDir);
+    Monochromator.RegisterCommand(F(":DIR")         , &SetMotorDir);
+    Monochromator.RegisterCommand(F(":STEP")        , &StepMotor);
     Monochromator.SetCommandTreeBase(F("STAGE:LIMit"));
-      Monochromator.RegisterCommand(F(":MAX?"), &GetMaxLimitState);
-      Monochromator.RegisterCommand(F(":MIN?"), &GetMinLimitState);
+      Monochromator.RegisterCommand(F(":MAX?")      , &GetMaxLimitState);
+      Monochromator.RegisterCommand(F(":MIN?")      , &GetMinLimitState);
     Monochromator.SetCommandTreeBase(F("STAGE:MOVe"));
-      Monochromator.RegisterCommand(F(":MAX")   , &GoToStageMax);
-      Monochromator.RegisterCommand(F(":MIN")   , &GoToStageMin);
+      Monochromator.RegisterCommand(F(":MAX")       , &GoToStageMax);
+      Monochromator.RegisterCommand(F(":MIN")       , &GoToStageMin);
 
   Monochromator.SetCommandTreeBase(F("PMT"));
-    Monochromator.RegisterCommand(F(":VALue?") , &GetPMT);
-    Monochromator.RegisterCommand(F(":OFFSET?"), &GetPMTOffset);
-    Monochromator.RegisterCommand(F(":OFFSET") , &SetPMTOffset);
+    Monochromator.RegisterCommand(F(":VALue?")      , &GetPMT);
+    Monochromator.RegisterCommand(F(":OFFSET?")     , &GetPMTOffset);
+    Monochromator.RegisterCommand(F(":OFFSET")      , &SetPMTOffset);
 
 
   /* Pin I/0 */
@@ -81,12 +85,24 @@ void setup()
   
   Serial.begin(BAUD);
 }
-void loop(){Monochromator.ProcessInput(Serial, "\n");}
+void loop(){Monochromator.ProcessInput(Serial, LINEFEED);}
 
 
 void Identify(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   interface.println(F("Ugrad Labs, Monochromator Controller, v" SKETCH_VERSION ", " __DATE__));
   // "<vendor>,<model>,<serial number>,<firmware>"
+}
+
+void Help(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  interface.println(F("COMMAND LIST: \n"));
+  interface.println(F("*IDN?        - Returns identifying information for the firmware on the device."));
+  interface.println(F("STAT?        - Returns the homing status of the Monochromator stage."));
+  interface.println(F("POS?         - Returns a floating point number representing the current position of the stage."));
+  interface.println(F("POS x        - Sets the position of the stage. x is a user supplied floating point number representing the desired stage position."));
+  interface.println(F("HOME         - Homes the Monochromator stage."));
+  interface.println(F("PMT?         - Returns the current output of the PMT."));
+  interface.println(F("PMT:OFFSET?  - Returns the current PMT offset setting."));
+  interface.println(F("PMT:OFFSET x - Sets the PMT offset. x is a user supplied unsigned integer from 0 to 127."));
 }
 
 void GetStatus(SCPI_C commands, SCPI_P parameters, Stream& interface){
