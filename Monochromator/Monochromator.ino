@@ -1,12 +1,12 @@
 /*
  * For use in the Atomic Spectra experiment in McGill University physics course(s) PHYS-359/439.
- * Written by Brandon Ruffolo in 2023.
+ * Written by Brandon Ruffolo in 2023/2024.
  */
 
 #include "Vrekrer_scpi_parser.h"
 
 /* Serial COM parameters */
-#define SKETCH_VERSION "0.0.1"
+#define SKETCH_VERSION "0.0.9"
 #define BAUD 115200 
 #define LINEFEED "\n"
 
@@ -29,6 +29,7 @@ const uint16_t HOMING_SETTLE_DELAY = 2000;  // Delay used between motor steps in
 const uint16_t HOMING_SWITCH_DELAY = 500;
 const uint8_t  PMT_DEFAULT_OFFSET  = 10;
 
+
 /* Motor */
 uint16_t motor_position  = 1; // $$(initially 1 to account for arduino reset?)$$
 uint8_t  motor_direction = 0;
@@ -39,17 +40,17 @@ uint8_t pmt_offset = PMT_DEFAULT_OFFSET;
 /* Homing */
 enum HOMING{NOT_DONE, COMPLETED, FAILED, RECAL};
 enum HOMING home_status    = NOT_DONE;
-const char *HOMING_NAMES[] = {"Not Done","Completed","Failed","Recalibrate"};
+const char *HOMING_NAMES[] = {"Not Completed","Completed","Failed","Recalibration Required"};
 
-bool _debug = true;
+bool _verbose = false;
+bool _debug   = false;
 
 SCPI_Parser Monochromator;
 
-void setup()
-{
+void setup(){
   /* SCPI commands */
   Monochromator.RegisterCommand(F("*IDN?")          , &Identify);
-  Monochromator.RegisterCommand(F("HELP")           , &Help);
+  //Monochromator.RegisterCommand(F("HELP")           , &Help);
   Monochromator.RegisterCommand(F("STATus?")        , &GetStatus);
   Monochromator.RegisterCommand(F("POSition?")      , &GetPosition);
   Monochromator.RegisterCommand(F("POSition")       , &SetPosition);
@@ -93,6 +94,7 @@ void Identify(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   // "<vendor>,<model>,<serial number>,<firmware>"
 }
 
+/*
 void Help(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   interface.println(F("COMMAND LIST: \n"));
   interface.println(F("*IDN?        - Returns identifying information for the firmware on the device."));
@@ -103,10 +105,11 @@ void Help(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   interface.println(F("PMT?         - Returns the current output of the PMT."));
   interface.println(F("PMT:OFFSET?  - Returns the current PMT offset setting."));
   interface.println(F("PMT:OFFSET x - Sets the PMT offset. x is a user supplied unsigned integer from 0 to 127."));
-}
+}*/
 
 void GetStatus(SCPI_C commands, SCPI_P parameters, Stream& interface){
-  interface.println("Homing: " +String(HOMING_NAMES[home_status]));
+  interface.print(F("(Homing) "));
+  interface.println(String(HOMING_NAMES[home_status]));
 }
 
 void Home(SCPI_C commands, SCPI_P parameters, Stream& interface){ /*
@@ -129,15 +132,17 @@ void Home(SCPI_C commands, SCPI_P parameters, Stream& interface){ /*
   /* Step the motor and count steps until hitting the switch */
   while(1){ 
       if( motor_position > MAX_STEP){
-        home_status = FAILED;        // Record homing failure
+        home_status = FAILED;               // Signal that homing has failed
         interface.println("Homing Failed. Error code -1, see a technician for assistance."); 
-        break;                       // Exit
+        return;                       // Exit
       } 
+
       if( digitalRead(PIN_SWITCH_MAX) ) break; // Exit if switch was triggered (we're done stepping) 
       singleStep();                            // Step the motor
       delayMicroseconds(HOMING_SETTLE_DELAY);  // An additional delay to help microswitches settle
       
       if(Serial.available()){ /* Treat any incoming serial data as a signal to stop the move. */
+        home_status = NOT_DONE;                // Signal that homing has not been completed
         interface.println("Homing interrupted.");
         if(_debug) digitalWrite(LED_BUILTIN,LOW);
         return;                    
@@ -170,42 +175,46 @@ void Home(SCPI_C commands, SCPI_P parameters, Stream& interface){ /*
 
 void SetDebug(SCPI_C commands, SCPI_P parameters, Stream& interface){
   if (parameters.Size() > 0) {
-      uint8_t setting = constrain(String(parameters[0]).toInt(), 0, 1);
-      _debug = setting;
-      } 
+    uint8_t setting = constrain(String(parameters[0]).toInt(), 0, 1);
+    _debug = setting;
+  } 
 }
 
 void GetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  if(home_status == COMPLETED) interface.println(String((float)motor_position/MICROSTEP_RATIO, 4));
-  else                         interface.println("Homing not complete, position unknown.");
+  if(home_status == COMPLETED) interface.println(String(motor_position, DEC)); //interface.println(String((float)motor_position/MICROSTEP_RATIO, 4));
+  else                         interface.println(F("Homing not complete, position unknown."));
 }
 
 void SetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   uint16_t new_position;
-  float x;
+  //float x;
   
   if (parameters.Size() > 0) {
-    x = constrain(String(parameters[0]).toFloat(), (float)MIN_STEP/MICROSTEP_RATIO, (float)MAX_STEP/MICROSTEP_RATIO );
-    if(_debug) interface.println("Target: "+String(x, 4));
+    // x = constrain(String(parameters[0]).toFloat(), (float)MIN_STEP/MICROSTEP_RATIO, (float)MAX_STEP/MICROSTEP_RATIO );
+    new_position = constrain(String(parameters[0]).toInt(), 0, 65535);
+    if(_debug) interface.println("Target: "+String(new_position, DEC));
   }
   else{
-    interface.println("No parameter supplied.");
+    interface.println(F("No parameter supplied."));
     return;
   }
-
-  new_position = (uint16_t)(x*MICROSTEP_RATIO);
   
   if(home_status != COMPLETED){
-    interface.println("Homing not properly completed. Position cannot be set.");
+    interface.println(F("Homing not completed. Position cannot be set."));
     return;
   }
   if(new_position > MAX_STEP || new_position < MIN_STEP ){
-    interface.println("Position is out of range.");
+    interface.println(F("Position is out of range."));
     return;  
   }
   if(new_position > motor_position)      set_direction(LOW);  // Set to forward direction 
   else if(new_position < motor_position) set_direction(HIGH); // Set to reverse direction
-  else                                               return;  // Exit (we are already there)
+  else{                                                       // Exit (we are already there)
+    interface.println(F("Already at desired position."));
+    return;
+  }                                                 
+
+  if(_verbose) interface.println(F("Move Starting.")); // Indicate start of stage movement
 
   /* Step until we arrive at desired position */
   while(motor_position != new_position){ 
@@ -213,23 +222,21 @@ void SetPosition(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     /* Check limit switches (in case something is horribly wrong with the calibration!) */
     if (digitalRead(PIN_SWITCH_MAX) && motor_direction == LOW){  // MAX limit switch hit before expected.
       home_status = RECAL;                                       // Call for a recalibration of the stage
-      interface.println("MAX limit switch hit before expected. Stage recalibration needed.");
+      interface.println(F("MAX limit switch hit before expected. Stage recalibration needed."));
       return; }
     if (digitalRead(PIN_SWITCH_MIN)&& motor_direction == HIGH){  // MIN limit switch hit before expected.
       home_status = RECAL;                                       // Call for a recalibration of the stage
-      interface.println("MIN limit switch hit before expected. Stage recalibration needed.");
+      interface.println(F("MIN limit switch hit before expected. Stage recalibration needed."));
       return;}
 
-    /* Treat any incoming serial data as a signal to stop the move. */
-    if(Serial.available()){
-      //while(Serial.available()) Serial.read(); // Flush the recieve buffer
-      interface.println("Move interrupted.");
+    
+    if(Serial.available()){    /* Treat any incoming serial data as a signal to stop the move. */
+      interface.println(F("Move interrupted."));
       return;
     }
-    
     singleStep();
   }
-  interface.println("Repositioned...");
+  interface.println(F("Move Completed."));
 }
 
 void GetPMT(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -284,7 +291,8 @@ void GetMinLimitState(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 }
 
 void GoToStageMax(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  set_direction(LOW);
+  set_direction(LOW);                               // Set the movement correct direction 
+  if(_verbose) interface.println(F("Move Starting.")); // Indicate start of stage movement
 
   while(1){ 
     if( digitalRead(PIN_SWITCH_MAX) ) break; // Exit if switch was triggered (we're done stepping) 
@@ -292,24 +300,28 @@ void GoToStageMax(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     delayMicroseconds(HOMING_SETTLE_DELAY);  // An additional delay to help microswitches settle
     
     if(Serial.available()){ /* Treat any incoming serial data as a signal to stop the move. */
-      interface.println("Move interrupted.");
+      interface.println(F("Move interrupted.")); // Indicate interruption of stage movement
       return;                    
     }
   }
+  interface.println(F("Move Completed.")); // Indicate successful end of stage movement
 }
 
 void GoToStageMin(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  set_direction(HIGH);
+  set_direction(HIGH);                              // Set the movement correct direction 
+  if(_verbose) interface.println(F("Move Starting.")); // Indicate start of stage movement
+
   while(1){ 
     if( digitalRead(PIN_SWITCH_MIN) ) break; // Exit if switch was triggered (we're done stepping) 
     singleStep();                            // Step the motor
     delayMicroseconds(HOMING_SETTLE_DELAY);  // An additional delay to help microswitches settle
     
     if(Serial.available()){ /* Treat any incoming serial data as a signal to stop the move. */
-      interface.println("Move interrupted.");
+      interface.println(F("Move interrupted.")); // Indicate interruption of stage movement
       return;                    
     }
   }
+  interface.println(F("Move Completed.")); // Indicate successful end of stage movement
 }
 
 
