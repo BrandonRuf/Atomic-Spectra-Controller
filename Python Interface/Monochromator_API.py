@@ -15,17 +15,17 @@ class Monochromator_api():
     
     Parameters
     ----------
-    port='COM5' : str
+    port='COM4' : str
         Name of the port to connect to.
         
     baudrate=115200 : int
         Baud rate of the connection. Must match the instrument setting.
         
-    timeout = 1 : int
+    timeout = None : int
         How long to wait for responses before giving up (s). 
         
     """
-    def __init__(self, port='COM5', baudrate=115200, timeout=.5):
+    def __init__(self, port='COM4', baudrate=115200, timeout=None):
                 
         if not _serial:
             print('You need to install pyserial to use the Atomic Spectra Monochromator.')
@@ -65,7 +65,7 @@ class Monochromator_api():
 
     def getID(self):
         """
-        Get the version of sketch currently on the arduino board.
+        Get the identification string of firware currently on the arduino board.
 
         Returns
         -------
@@ -93,7 +93,7 @@ class Monochromator_api():
     
     def getPmt(self):
         """
-        Get the photomultiplier tube (PMT) something.
+        Get the photomultiplier tube (PMT) voltage.
 
         Returns
         -------
@@ -116,7 +116,7 @@ class Monochromator_api():
         
         s = self.read()
         
-        try:     result = float(s)
+        try:     result = int(s)
         except:  result = s
         
         return s
@@ -127,7 +127,7 @@ class Monochromator_api():
         """
         self.write('HOME')
         
-        return self.read() == "Homing..."
+        return self.read()
     
     def getMaxLimit(self):
         return
@@ -157,7 +157,7 @@ class Monochromator_api():
         
         Parameters
         ----------
-        position : float
+        position : int
             Absolute position to which the stage will be moved.
 
         Returns
@@ -165,8 +165,8 @@ class Monochromator_api():
         None.
 
         """
-        self.write('POS %.3f'%(position)) # 3 significant figures needed!
-        return self.read() == "Moving..."
+        self.write('POS %d'%(position)) 
+        return self.read()
         
     def goToMax(self):
         return
